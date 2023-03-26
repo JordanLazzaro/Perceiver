@@ -182,28 +182,28 @@ class PerceiverBase(nn.Module):
 
 
 class PerceiverClassificationHead(nn.Module):
-        def __init__(
-            self,
+    def __init__(
+        self,
+        latent_channels,
+        latent_seq_len,
+        input_channels,
+        out_channels,
+        nheads,
+        nlayers,
+        dropout=0.1
+    ):
+        super().__init__()
+        self.perceiver = PerceiverBase(
             latent_channels,
             latent_seq_len,
             input_channels,
-            out_channels,
             nheads,
             nlayers,
-            dropout=0.1
-        ):
-            super().__init__()
-            self.perceiver = PerceiverBase(
-                latent_channels,
-                latent_seq_len,
-                input_channels,
-                nheads,
-                nlayers,
-                dropout
-            )
-            
-            self.head = nn.Linear(latent_channels, out_channels)
+            dropout
+        )
+        
+        self.head = nn.Linear(latent_channels, out_channels)
 
-        def forward(self, x):
-            x = self.perceiver(x)
-            return self.head(x) # logits for classification
+    def forward(self, x):
+        x = self.perceiver(x)
+        return self.head(x) # logits for classification
