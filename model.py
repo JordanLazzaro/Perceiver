@@ -58,8 +58,8 @@ class CrossAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, latent_q, input_kv):
-        batch_size, input_seq_len, _ = input_kv.size()
-        _, latent_seq_len, _ = latent_q.size()
+        batch_size, input_seq_len, input_channels = input_kv.size()
+        _, latent_seq_len, latent_channels = latent_q.size()
 
         latent_q = self.ln_1atent(latent_q)
         input_kv = self.ln_input(input_kv)
@@ -164,17 +164,25 @@ class PerceiverBase(nn.Module):
         latent_channels,
         latent_seq_len,
         input_channels,
+        input_seq_len,
         nheads,
         nlayers,
         dropout=0.1
     ):
         super().__init__()
+        self.pos_emb = nn.Embedding(input_seq_len, input_channels)
         self.latents = LatentEmbeddings(latent_seq_len, latent_channels)
         self.xattn = CrossAttention(latent_channels, input_channels, nheads=nheads, dropout=dropout)
         self.blocks = nn.ModuleList([TransformerBlock(latent_channels, nheads=nheads, dropout=dropout) for _ in range(nlayers)])
 
     def forward(self, x):
-        x = self.xattn(self.latents, x)
+        batch_size, seq_len, in_channels = x.size()
+        
+        pos = torch.arange(0, seq_len, dtype=torch.long, device=x.device).unsqueeze(0)
+        
+        x = x + self.pos_emb(pos)
+        
+        x = self.xattn(self.latents(batch_size), x)
         for block in self.blocks:
             x = block(x)
         
@@ -187,6 +195,7 @@ class PerceiverClassificationHead(nn.Module):
         latent_channels,
         latent_seq_len,
         input_channels,
+        input_seq_len,
         out_channels,
         nheads,
         nlayers,
@@ -197,6 +206,7 @@ class PerceiverClassificationHead(nn.Module):
             latent_channels,
             latent_seq_len,
             input_channels,
+            input_seq_len,
             nheads,
             nlayers,
             dropout
@@ -206,4 +216,7 @@ class PerceiverClassificationHead(nn.Module):
 
     def forward(self, x):
         x = self.perceiver(x)
-        return self.head(x) # logits for classification
+        x = torch.mean(x, dim=-2)
+        x = self.head(x) # logits for classification
+        
+        return x
