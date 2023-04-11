@@ -10,7 +10,7 @@ class CIFAR10DataModule(pl.LightningDataModule):
         self.transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-            transforms.Lambda(lambda x: x.view(-1, 3))
+            transforms.Lambda(lambda x: x.view(3, -1).t())
         ])
 
     def prepare_data(self):

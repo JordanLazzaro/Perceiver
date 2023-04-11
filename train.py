@@ -1,6 +1,7 @@
 import wandb
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.tuner import Tuner
 
 from data.cifar10 import CIFAR10DataModule
 from model import PerceiverClassificationHead
@@ -8,17 +9,20 @@ from lit_model import CIFAR10Classifier
 
 
 input_seq_len = 1024 # M in paper, 32*32 for CIFAR-10
-input_channels = 3 # kv_dim in huggingface impl.
+in_channels = 3 # kv_dim in huggingface impl.
+pos_emb_channels = in_channels * 2
 
 latent_seq_len = 128 # N in paper
-latent_channels = 512 # q_dim in huggingface impl.
+latent_channels = 256 # q_dim in huggingface impl.
 
 out_channels = latent_channels
 
-nheads = 4
-nlayers = 12
+nheads = 8
+nxheads = 1
+nlayers = 4
+nblocks = 2
 
-batch_size = 64
+batch_size = 128
 
 ################
 # Prepare data #
@@ -31,11 +35,15 @@ cifar10_data = CIFAR10DataModule(batch_size=batch_size)
 model = PerceiverClassificationHead(
     latent_channels,
     latent_seq_len,
-    input_channels,
+    in_channels,
     input_seq_len,
     out_channels,
     nheads,
-    nlayers
+    nxheads,
+    nlayers,
+    nblocks,
+    pos_emb_channels,
+    dropout=0.0
 )
 
 cifar10_classifier = CIFAR10Classifier(model)
@@ -44,16 +52,19 @@ cifar10_classifier = CIFAR10Classifier(model)
 # Prepare Trainer #
 ###################
 wandb_logger = WandbLogger(project="Perceiver CIFAR-10", log_model=True)
-wandb_logger.watch(cifar10_classifier)
+wandb_logger.watch(cifar10_classifier, log="all")
 
 trainer = pl.Trainer(
-    max_epochs=10,
+    max_epochs=25,
     devices=1,
     accelerator="gpu",
-    # precision="16-mixed",
-    # accumulate_grad_batches=4,
-    logger=wandb_logger
+    precision="16-mixed",
+    logger=wandb_logger,
+    # overfit_batches=1
 )
+
+tuner = Tuner(trainer)
+tuner.lr_find(cifar10_classifier, datamodule=cifar10_data)
 
 #############
 # Pump Iron #

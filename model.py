@@ -18,12 +18,12 @@ class CrossAttention(nn.Module):
     def __init__(
         self,
         latent_channels,
-        input_channels,
+        in_channels,
         qk_channels=None,
         v_channels=None,
         out_channels=None,
-        nheads=1,
-        dropout=0.1
+        nxheads=1,
+        dropout=0.0
     ):
         super().__init__()
 
@@ -41,33 +41,33 @@ class CrossAttention(nn.Module):
         assert v_channels % nheads == 0
 
         self.ln_1atent = nn.LayerNorm(latent_channels)
-        self.ln_input = nn.LayerNorm(input_channels)
+        self.ln_input = nn.LayerNorm(in_channels)
 
         self.W_Q = nn.Linear(latent_channels, qk_channels, bias=False)
-        self.W_K = nn.Linear(input_channels, qk_channels, bias=False)
+        self.W_K = nn.Linear(in_channels, qk_channels, bias=False)
         
-        self.W_V = nn.Linear(input_channels, v_channels, bias=False)
+        self.W_V = nn.Linear(in_channels, v_channels, bias=False)
         self.W_O = nn.Linear(v_channels, out_channels, bias=False)
 
         self.v_channels = v_channels
 
-        self.qk_head_dim = qk_channels // nheads 
-        self.v_head_dim = v_channels // nheads
+        self.qk_head_dim = qk_channels // nxheads 
+        self.v_head_dim = v_channels // nxheads
         
-        self.nheads = nheads
+        self.nxheads = nxheads
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, latent_q, input_kv):
-        batch_size, input_seq_len, input_channels = input_kv.size()
+        batch_size, input_seq_len, in_channels = input_kv.size()
         _, latent_seq_len, latent_channels = latent_q.size()
 
         latent_q = self.ln_1atent(latent_q)
         input_kv = self.ln_input(input_kv)
 
         # (batch_size, (latent/input)_seq_len, latent_channels) -> (batch_size, nheads, (latent/input)_seq_len, (qk/v)_head_dim)
-        Q = self.W_Q(latent_q).reshape(batch_size, latent_seq_len, self.nheads, self.qk_head_dim).transpose(1, 2)
-        K = self.W_K(input_kv).reshape(batch_size, input_seq_len, self.nheads, self.qk_head_dim).transpose(1, 2)
-        V = self.W_V(input_kv).reshape(batch_size, input_seq_len, self.nheads, self.v_head_dim).transpose(1, 2)
+        Q = self.W_Q(latent_q).reshape(batch_size, latent_seq_len, self.nxheads, self.qk_head_dim).transpose(1, 2)
+        K = self.W_K(input_kv).reshape(batch_size, input_seq_len, self.nxheads, self.qk_head_dim).transpose(1, 2)
+        V = self.W_V(input_kv).reshape(batch_size, input_seq_len, self.nxheads, self.v_head_dim).transpose(1, 2)
 
         # (batch_size, nheads, latent_seq_len, input_seq_len)
         attn = (Q @ K.transpose(-2, -1)) / (1.0 * math.sqrt(self.qk_head_dim))
@@ -87,7 +87,7 @@ class CrossAttention(nn.Module):
 
 
 class SelfAttention(nn.Module):
-    def __init__(self, in_channels, nheads, dropout=0.1):
+    def __init__(self, in_channels, nheads, dropout=0.0):
         super().__init__()
         assert in_channels % nheads == 0
 
@@ -127,7 +127,7 @@ class SelfAttention(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, in_channels, dropout=0.1):
+    def __init__(self, in_channels, dropout=0.0):
         super().__init__()
         self.fc1 = nn.Linear(in_channels, 4 * in_channels)
         self.act = nn.GELU()
@@ -144,7 +144,7 @@ class MLP(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, in_channels, nheads, dropout=0.1):
+    def __init__(self, in_channels, nheads, dropout=0.0):
         super().__init__()
         self.ln_1 = nn.LayerNorm(in_channels)
         self.attn = SelfAttention(in_channels, nheads, dropout)
@@ -158,35 +158,75 @@ class TransformerBlock(nn.Module):
         return x
 
 
+class PerceiverBlock(nn.Module):
+    def __init__(
+        self,
+        latent_channels,
+        in_channels,
+        nheads,
+        nxheads,
+        nlayers,
+        dropout=0.0
+    ):
+        ''' Perceiver block is one cross-attn followed by nlayer standard TransformerBlocks '''
+        super().__init__()
+        self.xattn = CrossAttention(latent_channels, in_channels, nxheads=nxheads, dropout=dropout)
+        self.blocks = nn.ModuleList([
+            TransformerBlock(latent_channels, nheads=nheads, dropout=dropout)
+            for _ in range(nlayers)
+        ])
+
+    def forward(self, latents, x):
+        latents = self.xattn(latents, x)
+        for block in self.blocks:
+            latents = block(latents)
+
+        return latents
+
+
 class PerceiverBase(nn.Module):
     def __init__(
         self,
         latent_channels,
         latent_seq_len,
-        input_channels,
+        in_channels,
         input_seq_len,
         nheads,
+        nxheads,
         nlayers,
-        dropout=0.1
+        nblocks,
+        pos_emb_channels,
+        dropout=0.0
     ):
         super().__init__()
-        self.pos_emb = nn.Embedding(input_seq_len, input_channels)
+        self.pos_emb = nn.Embedding(input_seq_len, pos_emb_channels)
         self.latents = LatentEmbeddings(latent_seq_len, latent_channels)
-        self.xattn = CrossAttention(latent_channels, input_channels, nheads=nheads, dropout=dropout)
-        self.blocks = nn.ModuleList([TransformerBlock(latent_channels, nheads=nheads, dropout=dropout) for _ in range(nlayers)])
+        self.perceiver_blocks = nn.ModuleList([
+            PerceiverBlock(
+                latent_channels,
+                in_channels + pos_emb_channels,
+                nheads,
+                nxheads,
+                nlayers,
+                dropout
+            )
+            for _ in range(nblocks)
+        ])
 
-    def forward(self, x):
-        batch_size, seq_len, in_channels = x.size()
+    def forward(self, input):
+        batch_size, seq_len, in_channels = input.size()
         
-        pos = torch.arange(0, seq_len, dtype=torch.long, device=x.device).unsqueeze(0)
+        pos = torch.arange(0, seq_len, dtype=torch.long, device=input.device)
+        pos_emb = self.pos_emb(pos).expand(batch_size, -1, -1)
         
-        x = x + self.pos_emb(pos)
-        
-        x = self.xattn(self.latents(batch_size), x)
-        for block in self.blocks:
-            x = block(x)
-        
-        return x
+        input = torch.cat([input, pos_emb], dim=-1)
+
+        latents = self.latents(batch_size)
+
+        for block in self.perceiver_blocks:
+            latents = block(latents, input)
+            
+        return latents
 
 
 class PerceiverClassificationHead(nn.Module):
@@ -194,21 +234,27 @@ class PerceiverClassificationHead(nn.Module):
         self,
         latent_channels,
         latent_seq_len,
-        input_channels,
+        in_channels,
         input_seq_len,
         out_channels,
         nheads,
+        nxheads,
         nlayers,
-        dropout=0.1
+        nblocks,
+        pos_emb_channels,
+        dropout=0.0
     ):
         super().__init__()
         self.perceiver = PerceiverBase(
             latent_channels,
             latent_seq_len,
-            input_channels,
+            in_channels,
             input_seq_len,
             nheads,
+            nxheads,
             nlayers,
+            nblocks,
+            pos_emb_channels,
             dropout
         )
         
