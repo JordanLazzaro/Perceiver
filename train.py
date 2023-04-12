@@ -10,12 +10,12 @@ from lit_model import CIFAR10Classifier
 
 input_seq_len = 1024 # M in paper, 32*32 for CIFAR-10
 in_channels = 3 # kv_dim in huggingface impl.
-pos_emb_channels = in_channels * 2
+pos_emb_channels = in_channels
 
-latent_seq_len = 128 # N in paper
+latent_seq_len = 256 # N in paper
 latent_channels = 256 # q_dim in huggingface impl.
 
-out_channels = latent_channels
+out_channels = 10 # CIFAR-10 has 10 classes
 
 nheads = 8
 nxheads = 1
