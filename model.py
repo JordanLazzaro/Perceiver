@@ -37,8 +37,8 @@ class CrossAttention(nn.Module):
             # the final channel number to match latent channels regardless
             out_channels = latent_channels
 
-        assert qk_channels % nheads == 0
-        assert v_channels % nheads == 0
+        assert qk_channels % nxheads == 0
+        assert v_channels % nxheads == 0
 
         self.ln_1atent = nn.LayerNorm(latent_channels)
         self.ln_input = nn.LayerNorm(in_channels)
@@ -60,9 +60,6 @@ class CrossAttention(nn.Module):
     def forward(self, latent_q, input_kv):
         batch_size, input_seq_len, in_channels = input_kv.size()
         _, latent_seq_len, latent_channels = latent_q.size()
-
-        latent_q = self.ln_1atent(latent_q)
-        input_kv = self.ln_input(input_kv)
 
         # (batch_size, (latent/input)_seq_len, latent_channels) -> (batch_size, nheads, (latent/input)_seq_len, (qk/v)_head_dim)
         Q = self.W_Q(latent_q).reshape(batch_size, latent_seq_len, self.nxheads, self.qk_head_dim).transpose(1, 2)
@@ -158,6 +155,29 @@ class TransformerBlock(nn.Module):
         return x
 
 
+class CrossAttentionBlock(nn.Module):
+    def __init__(self, latent_channels, in_channels, nxheads, dropout=0.0):
+        ''' each cross-attention is followed by an MLP in the Perciever '''
+        super().__init__()
+        self.xattn = CrossAttention(
+            latent_channels,
+            in_channels,
+            nxheads=nxheads,
+            dropout=dropout
+        )
+        self.mlp = MLP(latent_channels, dropout=dropout)
+        
+        self.ln_latent = nn.LayerNorm(latent_channels)
+        self.ln_input = nn.LayerNorm(in_channels)
+        self.ln_mlp = nn.LayerNorm(latent_channels)
+
+    def forward(self, latents, x):
+        latents = latents + self.xattn(self.ln_latent(latents), self.ln_input(x))
+        latents = latents + self.mlp(self.ln_mlp(latents))
+
+        return latents
+
+
 class PerceiverBlock(nn.Module):
     def __init__(
         self,
@@ -168,17 +188,17 @@ class PerceiverBlock(nn.Module):
         nlayers,
         dropout=0.0
     ):
-        ''' Perceiver block is one cross-attn followed by nlayer standard TransformerBlocks '''
+        ''' PerceiverBlock is one CrossAttentionBlock followed by nlayer standard TransformerBlocks '''
         super().__init__()
-        self.xattn = CrossAttention(latent_channels, in_channels, nxheads=nxheads, dropout=dropout)
-        self.blocks = nn.ModuleList([
+        self.xattn_block = CrossAttentionBlock(latent_channels, in_channels, nxheads=nxheads, dropout=dropout)
+        self.attn_blocks = nn.ModuleList([
             TransformerBlock(latent_channels, nheads=nheads, dropout=dropout)
             for _ in range(nlayers)
         ])
 
     def forward(self, latents, x):
-        latents = self.xattn(latents, x)
-        for block in self.blocks:
+        latents = self.xattn_block(latents, x)
+        for block in self.attn_blocks:
             latents = block(latents)
 
         return latents
