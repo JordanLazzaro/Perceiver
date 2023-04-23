@@ -40,9 +40,6 @@ class CrossAttention(nn.Module):
         assert qk_channels % nxheads == 0
         assert v_channels % nxheads == 0
 
-        self.ln_1atent = nn.LayerNorm(latent_channels)
-        self.ln_input = nn.LayerNorm(in_channels)
-
         self.W_Q = nn.Linear(latent_channels, qk_channels, bias=False)
         self.W_K = nn.Linear(in_channels, qk_channels, bias=False)
         
