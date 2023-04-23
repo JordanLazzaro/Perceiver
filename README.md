@@ -9,4 +9,4 @@ The goal for this project is to implementation the Perceiver architectural famil
 ## Why?
 The primary goal for this project is to gain some familiarity with the Perceiver and use it as a building block for making visually-conditioned langauge models like [Flamingo](https://arxiv.org/abs/2204.14198) or (presumably) GPT-4.
 
-In addition, I would like to gain familiarity with models which operate on multiple modalities and process them in latent space. This approach seems super promising to me as a research direction, having seen models like Gato from [A Generalist Agent](https://arxiv.org/abs/2205.06175) perform well on multiple tasks with a single decoder-only Transformer model.
+In addition (and in general), I would like to gain familiarity with models which operate on multiple modalities and process them in latent space. This approach seems super promising to me as a research direction, having seen models like Gato from [A Generalist Agent](https://arxiv.org/abs/2205.06175) perform well on multiple tasks with a single decoder-only Transformer model.
